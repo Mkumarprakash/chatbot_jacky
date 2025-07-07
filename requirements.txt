@@ -9,8 +9,8 @@ SpeechRecognition
 pyaudio
 gtts
 pydub
-opencv-python-headless==4.8.0.76
 pandas==2.2.2
 numpy==1.26.4
 tensorflow-cpu==2.15.0
+opencv-python-headless==4.8.0.76
 python-dotenv
