@@ -1,4 +1,3 @@
-
 import os 
 from dotenv import load_dotenv
 from langchain_community.embeddings import OllamaEmbeddings
@@ -9,111 +8,138 @@ from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 import streamlit as st
 
-#Addition for voice chat
+# Addition for voice chat
 import speech_recognition as sr
 from gtts import gTTS
 from io import BytesIO
 from pydub import AudioSegment
 from pydub.playback import play
+import time
 
-
-
+# Load environment variables
 load_dotenv()
 
-
-groq_api_key = os.getenv("groq_api_key")
-model = ChatGroq(model="gemma2-9b-it",groq_api_key=groq_api_key)
-embeddings = OllamaEmbeddings(model='gemma2:2b')
-mydb = Chroma(persist_directory="./chroma_db",embedding_function=embeddings)
-retriever = mydb.as_retriever(search_type='similarity',search_kwargs={"k":6})
-
-st.title("Welcome to Prakash's CHATBOT,🎙️ Prakash's Voice-Enabled Chatbot")
-
-
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = [] 
-query = st.chat_input("Ask me anything")
-
+# Set ffmpeg path for pydub
 AudioSegment.converter = "C:/ffmpeg/bin/ffmpeg.exe"
 
-# Speech Recognition Function
+# Load model and retriever
+groq_api_key = os.getenv("groq_api_key")
+model = ChatGroq(model="gemma2-9b-it", groq_api_key=groq_api_key)
+embeddings = OllamaEmbeddings(model='gemma2:2b')
+mydb = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
+retriever = mydb.as_retriever(search_type='similarity', search_kwargs={"k": 6})
+
+# Streamlit UI setup
+st.title("Welcome to Prakash's CHATBOT 🎙️ - Voice Enabled Assistant")
+
+# Session state
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "voice_active" not in st.session_state:
+    st.session_state.voice_active = False
+
+# Prompt template
+system_prompt = (
+    "You are an assistant for question answering all questions from who ask to help him/her to improve his knowledge. "
+    "Before that you ask his/her name for remember. Your name is Jacky. Keep answers concise—don't use extra words. "
+    "Highlight specific keywords.\n\n"
+    "Use the following pieces of retrieved context to answer the question. Do not read emojis. "
+    "Avoid repeating the user's name. Speak politely and constructively. Your tone should be exciting and luring.\n\n"
+    "{context}"
+)
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", system_prompt),
+    ("human", "{input}")
+])
+
+# Speech Recognition
 def recognize_speech():
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         st.write("🎤 Listening... Speak now!")
         recognizer.adjust_for_ambient_noise(source)
         try:
-            audio = recognizer.listen(source, timeout=5)  # Capture voice input
-            text = recognizer.recognize_google(audio)  # Convert speech to text
+            audio = recognizer.listen(source, timeout=5)
+            text = recognizer.recognize_google(audio)
             return text
         except sr.UnknownValueError:
             return "Sorry, I could not understand the audio."
         except sr.RequestError:
             return "Speech Recognition service is unavailable."
 
-# Text-to-Speech Function
-def speak(text):
+# Text-to-Speech
+def speak(text, speed=1.3):
     tts = gTTS(text=text, lang="en")
-    
-    # Save to BytesIO
     audio_bytes = BytesIO()
     tts.write_to_fp(audio_bytes)
     audio_bytes.seek(0)
-
-    # Load audio and play
     audio = AudioSegment.from_file(audio_bytes, format="mp3")
-    play(audio)
+    faster_audio = audio._spawn(audio.raw_data, overrides={
+        "frame_rate": int(audio.frame_rate * speed)
+    }).set_frame_rate(audio.frame_rate)
+    play(faster_audio)
 
-
-system_prompt = (
-    "You are an assistant for question answering all questions from who ask to help him/her to improve his knowledge.before that you ask his/her name for remember. and your name is jacky and also give that much answer how much required not morethan that extra word . and also highlight the specific words "
-    "Use the following pieces of retrieved context to answer the question. and read fast and don't  read emoji and  don't my name again and again "
-    "Make sure you talk very polite with the customer and  write anything good or bad  which is appropriate."
-    "Your tone of reply should always be exciting and luring to me."
-    "\n\n"
-    "{context}"
-)
-
-prompt = ChatPromptTemplate.from_messages([
-    ("system",system_prompt),
-    ("human","{input}")
-])
-
+# Chat display history
 for user_query, bot_response in st.session_state.chat_history:
     with st.chat_message("user"):
         st.write(user_query)
     with st.chat_message("assistant"):
         st.write(bot_response)
 
+# Live voice toggle buttons
+col1, col2 = st.columns([1, 1])
+with col1:
+    if st.button("🎙️ Start Voice Chat"):
+        st.session_state.voice_active = True
+with col2:
+    if st.button("🛑 Stop Voice Chat"):
+        st.session_state.voice_active = False
 
+# Live voice chat loop
+if st.session_state.voice_active:
+    st.info("🟢 Voice chat is active... Speak your question.")
 
-# Capture voice input
-if st.button("🎙️ Start Voice Input"):
-    query = recognize_speech()
-    st.write(f"**You:** {query}")
-else:
-    query = st.text_input("💬 Type your question here")
+    while st.session_state.voice_active:
+        query = recognize_speech()
 
-if query:
-    # Display user message
-    with st.chat_message("user"):
-        st.write(query)
+        if query:
+            with st.chat_message("user"):
+                st.write(query)
 
-    # Create the response chain
-    question_answer_chain = create_stuff_documents_chain(model, prompt)
-    rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+            # Create the RAG chain
+            question_answer_chain = create_stuff_documents_chain(model, prompt)
+            rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 
-    # Get response
-    response = rag_chain.invoke({'input': query})
-    bot_reply = response['answer']
+            # Get response
+            response = rag_chain.invoke({'input': query})
+            bot_reply = response['answer']
 
-    # Display chatbot reply
-    with st.chat_message("assistant"):
-        st.write(bot_reply)
-    # Speak the response
-    speak(bot_reply)
+            with st.chat_message("assistant"):
+                st.write(bot_reply)
 
-    # Store the interaction in chat history
-    st.session_state.chat_history.append((query, bot_reply))
+            # Speak and store
+            speak(bot_reply)
+            st.session_state.chat_history.append((query, bot_reply))
 
+        time.sleep(1)  # prevent tight loop
 
+# Manual input fallback
+if not st.session_state.voice_active:
+    query = st.chat_input("💬 Type your question here")
+
+    if query:
+        with st.chat_message("user"):
+            st.write(query)
+
+        question_answer_chain = create_stuff_documents_chain(model, prompt)
+        rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+
+        response = rag_chain.invoke({'input': query})
+        bot_reply = response['answer']
+
+        with st.chat_message("assistant"):
+            st.write(bot_reply)
+
+        speak(bot_reply)
+        st.session_state.chat_history.append((query, bot_reply))
